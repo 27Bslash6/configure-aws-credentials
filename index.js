@@ -3,6 +3,7 @@ const aws = require('aws-sdk');
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const retry = require('async-retry');
 
 // The max time that a GitHub action is allowed to run is 6 hours.
 // That seems like a reasonable default to use if no role duration is defined.
@@ -13,6 +14,9 @@ const MAX_TAG_VALUE_LENGTH = 256;
 const SANITIZATION_CHARACTER = '_';
 const ROLE_SESSION_NAME = 'GitHubActions';
 const REGION_REGEX = /^[a-z0-9-]+$/g;
+const RETRY_MAX_ATTEMPTS = 5;
+const RETRY_MIN_TIMEOUT_MS = 1 * 1000;
+const RETRY_MAX_TIMEOUT_MS = 300 * 1000;
 
 async function assumeRole(params) {
   // Assume a role to get short-lived credentials using longer-lived credentials.
@@ -185,6 +189,7 @@ async function exportAccountId(maskAccountId, region) {
 }
 
 function loadCredentials() {
+  console.log('Loading credentials...');
   // Force the SDK to re-resolve credentials with the default provider chain.
   //
   // This action typically sets credentials in the environment via environment variables.
@@ -210,6 +215,7 @@ function loadCredentials() {
 }
 
 async function validateCredentials(expectedAccessKeyId) {
+  console.log('Validating credentials...');
   let credentials;
   try {
     credentials = await loadCredentials();
@@ -229,6 +235,7 @@ async function validateCredentials(expectedAccessKeyId) {
 }
 
 function getStsClient(region) {
+  console.log('Creating STS client...');
   return new aws.STS({
     region,
     stsRegionalEndpoints: 'regional',
@@ -236,110 +243,123 @@ function getStsClient(region) {
   });
 }
 
+function onRetry(error) {
+  core.setFailed(error.message);
+  
+  const showStackTrace = process.env.SHOW_STACK_TRACE;
+
+  if (showStackTrace === 'true') {
+    throw(error)
+  }
+}
+
 async function run() {
-  try {
-    // Get inputs
-    const accessKeyId = core.getInput('aws-access-key-id', { required: false });
-    const secretAccessKey = core.getInput('aws-secret-access-key', { required: false });
-    const region = core.getInput('aws-region', { required: true });
-    const sessionToken = core.getInput('aws-session-token', { required: false });
-    const maskAccountId = core.getInput('mask-aws-account-id', { required: false });
-    const roleToAssume = core.getInput('role-to-assume', {required: false});
-    const roleExternalId = core.getInput('role-external-id', { required: false });
-    let roleDurationSeconds = core.getInput('role-duration-seconds', {required: false}) || MAX_ACTION_RUNTIME;
-    const roleSessionName = core.getInput('role-session-name', { required: false }) || ROLE_SESSION_NAME;
-    const roleSkipSessionTaggingInput = core.getInput('role-skip-session-tagging', { required: false })|| 'false';
-    const roleSkipSessionTagging = roleSkipSessionTaggingInput.toLowerCase() === 'true';
-    const webIdentityTokenFile = core.getInput('web-identity-token-file', { required: false });
+  const retryMaxAttempts = core.getInput('retry-max-attempts', { required: false }) || RETRY_MAX_ATTEMPTS;
+  const retryMinTimeout = core.getInput('retry-min-timeout', { required: false }) || RETRY_MIN_TIMEOUT_MS;
+  const retryMaxTimeout = core.getInput('retry-max-timeout', { required: false }) || RETRY_MAX_TIMEOUT_MS;
+  console.log("Attempting " + retryMaxAttempts + " times");
+  await retry(
+    async () => {
+      // Get inputs
+      const accessKeyId = core.getInput('aws-access-key-id', { required: false });
+      const secretAccessKey = core.getInput('aws-secret-access-key', { required: false });
+      const region = core.getInput('aws-region', { required: true });
+      const sessionToken = core.getInput('aws-session-token', { required: false });
+      const maskAccountId = core.getInput('mask-aws-account-id', { required: false });
+      const roleToAssume = core.getInput('role-to-assume', {required: false});
+      const roleExternalId = core.getInput('role-external-id', { required: false });
+      let roleDurationSeconds = core.getInput('role-duration-seconds', {required: false}) || MAX_ACTION_RUNTIME;
+      const roleSessionName = core.getInput('role-session-name', { required: false }) || ROLE_SESSION_NAME;
+      const roleSkipSessionTaggingInput = core.getInput('role-skip-session-tagging', { required: false })|| 'false';
+      const roleSkipSessionTagging = roleSkipSessionTaggingInput.toLowerCase() === 'true';
+      const webIdentityTokenFile = core.getInput('web-identity-token-file', { required: false });
+      
 
-    if (!region.match(REGION_REGEX)) {
-      throw new Error(`Region is not valid: ${region}`);
-    }
-
-    exportRegion(region);
-
-    // This wraps the logic for deciding if we should rely on the GH OIDC provider since we may need to reference
-    // the decision in a few differennt places. Consolidating it here makes the logic clearer elsewhere.
-    const useGitHubOIDCProvider = () => {
-        // The assumption here is that self-hosted runners won't be populating the `ACTIONS_ID_TOKEN_REQUEST_TOKEN`
-        // environment variable and they won't be providing a web idenity token file or access key either.
-        // V2 of the action might relax this a bit and create an explicit precedence for these so that customers
-        // can provide as much info as they want and we will follow the established credential loading precedence.
-        return roleToAssume && process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN && !accessKeyId && !webIdentityTokenFile
-    }
-
-    // Always export the source credentials and account ID.
-    // The STS client for calling AssumeRole pulls creds from the environment.
-    // Plus, in the assume role case, if the AssumeRole call fails, we want
-    // the source credentials and account ID to already be masked as secrets
-    // in any error messages.
-    if (accessKeyId) {
-      if (!secretAccessKey) {
-        throw new Error("'aws-secret-access-key' must be provided if 'aws-access-key-id' is provided");
+      if (!region.match(REGION_REGEX)) {
+        throw new Error(`Region is not valid: ${region}`);
       }
 
-      exportCredentials({accessKeyId, secretAccessKey, sessionToken});
+      exportRegion(region);
+
+      // This wraps the logic for deciding if we should rely on the GH OIDC provider since we may need to reference
+      // the decision in a few differennt places. Consolidating it here makes the logic clearer elsewhere.
+      const useGitHubOIDCProvider = () => {
+          // The assumption here is that self-hosted runners won't be populating the `ACTIONS_ID_TOKEN_REQUEST_TOKEN`
+          // environment variable and they won't be providing a web idenity token file or access key either.
+          // V2 of the action might relax this a bit and create an explicit precedence for these so that customers
+          // can provide as much info as they want and we will follow the established credential loading precedence.
+          return roleToAssume && process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN && !accessKeyId && !webIdentityTokenFile
+      }
+
+      // Always export the source credentials and account ID.
+      // The STS client for calling AssumeRole pulls creds from the environment.
+      // Plus, in the assume role case, if the AssumeRole call fails, we want
+      // the source credentials and account ID to already be masked as secrets
+      // in any error messages.
+      if (accessKeyId) {
+        if (!secretAccessKey) {
+          throw new Error("'aws-secret-access-key' must be provided if 'aws-access-key-id' is provided");
+        }
+
+        exportCredentials({accessKeyId, secretAccessKey, sessionToken});
+      }
+      
+      // Attempt to load credentials from the GitHub OIDC provider.
+      // If a user provides an IAM Role Arn and DOESN'T provide an Access Key Id
+      // The only way to assume the role is via GitHub's OIDC provider.
+      let sourceAccountId;
+      let webIdentityToken;
+      if(useGitHubOIDCProvider()) {
+        webIdentityToken = await core.getIDToken('sts.amazonaws.com');
+        roleDurationSeconds = core.getInput('role-duration-seconds', {required: false}) || DEFAULT_ROLE_DURATION_FOR_OIDC_ROLES;
+        // We don't validate the credentials here because we don't have them yet when using OIDC.
+      } else {
+        // Regardless of whether any source credentials were provided as inputs,
+        // validate that the SDK can actually pick up credentials.  This validates
+        // cases where this action is on a self-hosted runner that doesn't have credentials
+        // configured correctly, and cases where the user intended to provide input
+        // credentials but the secrets inputs resolved to empty strings.
+        await validateCredentials(accessKeyId);
+        sourceAccountId = await exportAccountId(maskAccountId, region);
+      }
+
+      // Get role credentials if configured to do so
+      if (roleToAssume) {
+        const roleCredentials = await assumeRole({
+          sourceAccountId,
+          region,
+          roleToAssume,
+          roleExternalId,
+          roleDurationSeconds,
+          roleSessionName,
+          roleSkipSessionTagging,
+          webIdentityTokenFile,
+          webIdentityToken
+        });
+        exportCredentials(roleCredentials);
+        // We need to validate the credentials in 2 of our use-cases
+        // First: self-hosted runners. If the GITHUB_ACTIONS environment variable
+        //  is set to `true` then we are NOT in a self-hosted runner.
+        // Second: Customer provided credentials manually (IAM User keys stored in GH Secrets)
+        if (!process.env.GITHUB_ACTIONS || accessKeyId) {
+          await validateCredentials(roleCredentials.accessKeyId);
+        }
+        await exportAccountId(maskAccountId, region);
+      }
+    },
+    {
+      retries: retryMaxAttempts,
+      minTimeout: retryMinTimeout,
+      maxTimeout: retryMaxTimeout,
+      onRetry: onRetry
     }
+  );
     
-    // Attempt to load credentials from the GitHub OIDC provider.
-    // If a user provides an IAM Role Arn and DOESN'T provide an Access Key Id
-    // The only way to assume the role is via GitHub's OIDC provider.
-    let sourceAccountId;
-    let webIdentityToken;
-    if(useGitHubOIDCProvider()) {
-      webIdentityToken = await core.getIDToken('sts.amazonaws.com');
-      roleDurationSeconds = core.getInput('role-duration-seconds', {required: false}) || DEFAULT_ROLE_DURATION_FOR_OIDC_ROLES;
-      // We don't validate the credentials here because we don't have them yet when using OIDC.
-    } else {
-      // Regardless of whether any source credentials were provided as inputs,
-      // validate that the SDK can actually pick up credentials.  This validates
-      // cases where this action is on a self-hosted runner that doesn't have credentials
-      // configured correctly, and cases where the user intended to provide input
-      // credentials but the secrets inputs resolved to empty strings.
-      await validateCredentials(accessKeyId);
-
-      sourceAccountId = await exportAccountId(maskAccountId, region);
-    }
-
-    // Get role credentials if configured to do so
-    if (roleToAssume) {
-      const roleCredentials = await assumeRole({
-        sourceAccountId,
-        region,
-        roleToAssume,
-        roleExternalId,
-        roleDurationSeconds,
-        roleSessionName,
-        roleSkipSessionTagging,
-        webIdentityTokenFile,
-        webIdentityToken
-      });
-      exportCredentials(roleCredentials);
-      // We need to validate the credentials in 2 of our use-cases
-      // First: self-hosted runners. If the GITHUB_ACTIONS environment variable
-      //  is set to `true` then we are NOT in a self-hosted runner.
-      // Second: Customer provided credentials manually (IAM User keys stored in GH Secrets)
-      if (!process.env.GITHUB_ACTIONS || accessKeyId) {
-        await validateCredentials(roleCredentials.accessKeyId);
-      }
-      await exportAccountId(maskAccountId, region);
-    }
-  }
-  catch (error) {
-    core.setFailed(error.message);
-
-    const showStackTrace = process.env.SHOW_STACK_TRACE;
-
-    if (showStackTrace === 'true') {
-      throw(error)
-    }
-
-  }
 }
 
 module.exports = run;
 
 /* istanbul ignore next */
 if (require.main === module) {
-    run();
+  run();
 }

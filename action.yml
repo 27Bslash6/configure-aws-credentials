@@ -51,6 +51,18 @@ inputs:
   role-skip-session-tagging:
     description: 'Skip session tagging during role assumption'
     required: false
+  retry-max-attempts:
+    description: >-
+      Number of attempts before failing. Useful to avoid intermittent network problems
+      or for resilience when running multiple parallel tasks and running up against 
+      API throttling. Defaults to 5
+    required: false
+  retry-min-timeout:
+    description: Minimum delay in millseconds between attempts.  Defaults to 1000 (1 second)
+    required: false
+  retry-max-timeout:
+    description: Maximum delay in millseconds between attempts.  Defaults to 300000 (5 minutes)
+    required: false
 outputs:
   aws-account-id:
     description: 'The AWS account ID for the provided credentials'

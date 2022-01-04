@@ -35,19 +35,23 @@ function mockGetInput(requestResponse) {
 }
 const CREDS_INPUTS = {
     'aws-access-key-id': FAKE_ACCESS_KEY_ID,
-    'aws-secret-access-key': FAKE_SECRET_ACCESS_KEY
+    'aws-secret-access-key': FAKE_SECRET_ACCESS_KEY,
+    'retry-max-attempts': 2
 };
 const DEFAULT_INPUTS = {
     ...CREDS_INPUTS,
     'aws-session-token': FAKE_SESSION_TOKEN,
     'aws-region': FAKE_REGION,
-    'mask-aws-account-id': 'TRUE'
+    'mask-aws-account-id': 'TRUE',
+    'retry-max-attempts': 2
 };
 const ASSUME_ROLE_INPUTS = {...CREDS_INPUTS, 'role-to-assume': ROLE_ARN, 'aws-region': FAKE_REGION};
 
 const mockStsCallerIdentity = jest.fn();
 const mockStsAssumeRole = jest.fn();
 const mockStsAssumeRoleWithWebIdentity = jest.fn();
+
+jest.setTimeout(20000)
 
 jest.mock('aws-sdk', () => {
     return {
@@ -276,7 +280,7 @@ describe('Configure AWS Credentials', () => {
 
         await run();
         expect(mockStsAssumeRole).toHaveBeenCalledTimes(0);
-        expect(core.exportVariable).toHaveBeenCalledTimes(4);
+        expect(core.exportVariable).toHaveBeenCalledTimes(5);
         expect(core.setSecret).toHaveBeenCalledTimes(3);
         expect(core.exportVariable).toHaveBeenCalledWith('AWS_ACCESS_KEY_ID', FAKE_ACCESS_KEY_ID);
         expect(core.setSecret).toHaveBeenCalledWith(FAKE_ACCESS_KEY_ID);
@@ -354,7 +358,7 @@ describe('Configure AWS Credentials', () => {
 
         await run();
         expect(mockStsAssumeRole).toHaveBeenCalledTimes(0);
-        expect(core.exportVariable).toHaveBeenCalledTimes(4);
+        expect(core.exportVariable).toHaveBeenCalledTimes(5);
         expect(core.exportVariable).toHaveBeenCalledWith('AWS_ACCESS_KEY_ID', FAKE_ACCESS_KEY_ID);
         expect(core.setSecret).toHaveBeenCalledWith(FAKE_ACCESS_KEY_ID);
         expect(core.exportVariable).toHaveBeenCalledWith('AWS_SECRET_ACCESS_KEY', FAKE_SECRET_ACCESS_KEY);
@@ -397,7 +401,7 @@ describe('Configure AWS Credentials', () => {
 
         await run();
         expect(mockStsAssumeRole).toHaveBeenCalledTimes(1);
-        expect(core.exportVariable).toHaveBeenCalledTimes(7);
+        expect(core.exportVariable).toHaveBeenCalledTimes(8);
         expect(core.setSecret).toHaveBeenCalledTimes(7);
         expect(core.setOutput).toHaveBeenCalledTimes(2);
 
