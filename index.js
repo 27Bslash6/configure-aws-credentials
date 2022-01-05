@@ -246,13 +246,13 @@ function getStsClient(region) {
 }
 
 function onRetry(error) {
-  core.info('Retrying ...')
+  core.warning('Retrying ...')
   core.setFailed(error.message);
   
   const showStackTrace = process.env.SHOW_STACK_TRACE;
 
   if (showStackTrace === 'true') {
-    throw(error)
+    core.debug(error)
   }
 }
 
