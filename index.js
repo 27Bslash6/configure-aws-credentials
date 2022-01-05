@@ -49,12 +49,14 @@ async function assumeRole(params) {
   let roleArn = roleToAssume;
   if (!roleArn.startsWith('arn:aws')) {
     // Supports only 'aws' partition. Customers in other partitions ('aws-cn') will need to provide full ARN
-  assert(
-      isDefined(sourceAccountId),
-      "Source Account ID is needed if the Role Name is provided and not the Role Arn."
-  );
+    assert(
+        isDefined(sourceAccountId),
+        "Source Account ID is needed if the Role Name is provided and not the Role Arn."
+    );
     roleArn = `arn:aws:iam::${sourceAccountId}:role/${roleArn}`;
   }
+
+  core.info("Assuming role: " + roleArn)
 
   const tagArray = [
     {Key: 'GitHub', Value: 'Actions'},
@@ -189,7 +191,7 @@ async function exportAccountId(maskAccountId, region) {
 }
 
 function loadCredentials() {
-  console.log('Loading credentials...');
+  core.info('Loading credentials...');
   // Force the SDK to re-resolve credentials with the default provider chain.
   //
   // This action typically sets credentials in the environment via environment variables.
@@ -215,7 +217,7 @@ function loadCredentials() {
 }
 
 async function validateCredentials(expectedAccessKeyId) {
-  console.log('Validating credentials...');
+  core.info('Validating credentials...');
   let credentials;
   try {
     credentials = await loadCredentials();
@@ -235,7 +237,7 @@ async function validateCredentials(expectedAccessKeyId) {
 }
 
 function getStsClient(region) {
-  console.log('Creating STS client...');
+  core.info('Creating STS client...');
   return new aws.STS({
     region,
     stsRegionalEndpoints: 'regional',
@@ -244,6 +246,7 @@ function getStsClient(region) {
 }
 
 function onRetry(error) {
+  core.info('Retrying ...')
   core.setFailed(error.message);
   
   const showStackTrace = process.env.SHOW_STACK_TRACE;
@@ -257,7 +260,7 @@ async function run() {
   const retryMaxAttempts = core.getInput('retry-max-attempts', { required: false }) || RETRY_MAX_ATTEMPTS;
   const retryMinTimeout = core.getInput('retry-min-timeout', { required: false }) || RETRY_MIN_TIMEOUT_MS;
   const retryMaxTimeout = core.getInput('retry-max-timeout', { required: false }) || RETRY_MAX_TIMEOUT_MS;
-  console.log("Attempting " + retryMaxAttempts + " times");
+  core.debug("Will retry " + retryMaxAttempts + " times");
   await retry(
     async () => {
       // Get inputs
