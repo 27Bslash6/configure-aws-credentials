@@ -14,7 +14,7 @@ const MAX_TAG_VALUE_LENGTH = 256;
 const SANITIZATION_CHARACTER = '_';
 const ROLE_SESSION_NAME = 'GitHubActions';
 const REGION_REGEX = /^[a-z0-9-]+$/g;
-const RETRY_MAX_ATTEMPTS = 5;
+const RETRY_MAX_ATTEMPTS = 10;
 const RETRY_MIN_TIMEOUT_MS = 1 * 1000;
 const RETRY_MAX_TIMEOUT_MS = 300 * 1000;
 
