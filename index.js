@@ -246,8 +246,10 @@ function getStsClient(region) {
 }
 
 function onRetry(error) {
+  core.warning(error.message)
   core.warning('Retrying ...')
-  core.setFailed(error.message);
+
+  process.exitCode = 0;
   
   const showStackTrace = process.env.SHOW_STACK_TRACE;
 
