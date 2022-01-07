@@ -15,8 +15,8 @@ const SANITIZATION_CHARACTER = '_';
 const ROLE_SESSION_NAME = 'GitHubActions';
 const REGION_REGEX = /^[a-z0-9-]+$/g;
 const RETRY_MAX_ATTEMPTS = 10;
-const RETRY_MIN_TIMEOUT_MS = 1 * 1000;
-const RETRY_MAX_TIMEOUT_MS = 300 * 1000;
+const RETRY_MIN_TIMEOUT_MS = 1 * 1000; // 1 second
+const RETRY_MAX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 async function assumeRole(params) {
   // Assume a role to get short-lived credentials using longer-lived credentials.
@@ -264,7 +264,7 @@ async function run() {
   const retryMaxTimeout = core.getInput('retry-max-timeout', { required: false }) || RETRY_MAX_TIMEOUT_MS;
   core.debug("Will retry " + retryMaxAttempts + " times");
   await retry(
-    async () => {
+    async (bail) => {
       // Get inputs
       const accessKeyId = core.getInput('aws-access-key-id', { required: false });
       const secretAccessKey = core.getInput('aws-secret-access-key', { required: false });
@@ -281,7 +281,7 @@ async function run() {
       
 
       if (!region.match(REGION_REGEX)) {
-        throw new Error(`Region is not valid: ${region}`);
+        bail(new Error(`Region is not valid: ${region}`));
       }
 
       exportRegion(region);
@@ -303,7 +303,7 @@ async function run() {
       // in any error messages.
       if (accessKeyId) {
         if (!secretAccessKey) {
-          throw new Error("'aws-secret-access-key' must be provided if 'aws-access-key-id' is provided");
+          bail(new Error("'aws-secret-access-key' must be provided if 'aws-access-key-id' is provided"));
         }
 
         exportCredentials({accessKeyId, secretAccessKey, sessionToken});
